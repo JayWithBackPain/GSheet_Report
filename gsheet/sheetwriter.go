@@ -3,8 +3,6 @@ package gsheet
 import (
 	"fmt"
 	"log"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/Paktor/Daily-Report-Update/sys"
@@ -39,7 +37,7 @@ func findStartColumn(GSheetService *sheets.Service, req SheetConfig, minDate tim
 	// 檢查是否有資料
 	if len(searchResult.Values) == 0 || len(searchResult.Values[0]) == 0 {
 		// 如果沒有找到資料，使用預設的 WRITEANCHOR
-		d2ColumnIndex, _ := strconv.Atoi(os.Getenv("WRITEANCHOR"))
+		d2ColumnIndex := req.WriteAnchor
 		return d2ColumnIndex, rowNumber, nil
 	}
 
@@ -107,10 +105,6 @@ func WriteTargetDateData(SQLKey string, req SheetConfig, QueryResults []map[stri
 			dateHeaders = append(dateHeaders, "")
 		}
 	}
-
-	// 調試：輸出讀取到的日期欄位
-	//log.Printf("Read date headers from sheet: %v", dateHeaders)
-	//log.Printf("Date headers count: %d", len(dateHeaders))
 
 	// ----- 掃 Metrics Label ------------------------------
 	PointerRange := fmt.Sprintf("%s!%s", req.SheetName, req.QueryParameterRange)

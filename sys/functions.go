@@ -41,16 +41,6 @@ func LetterToColumnIndex(letter string) int {
 	return result
 }
 
-func SetNestedMap(m map[string]map[string]map[string][]interface{}, key1, key2, key3 string, value []interface{}) {
-	if _, ok := m[key1]; !ok {
-		m[key1] = make(map[string]map[string][]interface{})
-	}
-	if _, ok := m[key1][key2]; !ok {
-		m[key1][key2] = make(map[string][]interface{})
-	}
-	m[key1][key2][key3] = value
-}
-
 func LoadSQLFiles(dir string) (map[string]string, error) {
 
 	sqlMap := make(map[string]string)
