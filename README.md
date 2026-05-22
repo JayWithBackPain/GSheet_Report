@@ -129,20 +129,26 @@ GSheet_Report/
 │   └── main.go              # Lambda Handler 和主程式入口
 ├── dbquery/
 │   ├── definitions.go       # 資料查詢相關類型定義
-│   └── function.go         # 資料庫查詢函數
+│   └── function.go          # 資料庫查詢函數
 ├── gsheet/
 │   ├── connector.go         # Google Sheets API 連接
 │   ├── sheetwriter.go       # Sheet 寫入邏輯
 │   ├── utils.go             # 工具函數（日期處理、類型轉換等）
-│   └── definitions.go        # Sheet 相關類型定義
+│   └── definitions.go       # Sheet 相關類型定義
 ├── sys/
-│   └── functions.go         # 系統工具函數（SQL 載入、欄位轉換等）
-├── dev_sql/                 # SQL 查詢檔案目錄
-│   ├── payers.sql
-│   └── revenue.sql
+│   ├── functions.go         # 系統工具函數（SQL 載入、欄位轉換等）
+│   └── config.go            # YAML 產品設定載入器
+├── config/                  # 各產品設定（YAML），每個產品一個目錄
+│   └── younow/
+│       └── config.yaml
+├── queries/                 # SQL 查詢檔案，依 <product>/<report>/ 分層
+│   └── younow/
+│       └── daily/
+│           ├── payers.sql
+│           └── revenue.sql
 ├── go.mod                   # Go 模組定義
 ├── go.sum                   # 依賴版本鎖定
-├── deploy.sh                # 部署腳本
+├── deploy.sh                # 部署腳本（依產品執行）
 └── README.md                # 本文件
 ```
 
@@ -186,28 +192,28 @@ FRESH_TOKEN=your_refresh_token
 
 ### Lambda 環境
 
-Lambda 函數接收 JSON 格式的請求：
+Lambda 函數只需要接收 `product` 與 `report`，其餘設定一律由 `config/<product>/config.yaml` 中 `reports.<report>` 決定：
 
 ```json
 {
-  "sql_dir": "dev_sql",
-  "sheet_name": "report",
-  "write_anchor": 11,
-  "start_search_column": "K2",
-  "query_parameter_range": "H:J",
-  "spreadsheet_id": "your_spreadsheet_id"
+  "product": "younow",
+  "report": "daily"
 }
 ```
 
 ### 本地測試
 
-直接執行 `main.go`：
+直接執行 `cmd/main.go`：
 
 ```bash
+# 預設執行 config/younow/config.yaml 的 daily 報表
 go run cmd/main.go
+
+# 透過環境變數切換產品 / 報表
+PRODUCT=younow REPORT=weekly go run cmd/main.go
 ```
 
-程式會自動判斷環境，本地環境會使用預設的測試請求。
+程式會自動判斷 Lambda / 本地環境；本地端會用 `PRODUCT`（預設 `younow`）與 `REPORT`（預設 `daily`）構造測試請求。
 
 ## 配置說明
 
@@ -215,16 +221,93 @@ go run cmd/main.go
 
 | 參數 | 類型 | 說明 | 範例 |
 |------|------|------|------|
-| `sql_dir` | string | SQL 檔案目錄名稱 | `"dev_sql"` |
-| `sheet_name` | string | Google Sheet 工作表名稱 | `"report"` |
-| `write_anchor` | int | 寫入起始欄位索引 | `11` |
-| `start_search_column` | string | 日期搜尋起始儲存格 | `"K2"` |
-| `query_parameter_range` | string | 查詢參數範圍 | `"H:J"` |
-| `spreadsheet_id` | string | Google Spreadsheet ID | `"1jaq2OJKUio..."` |
+| `product` | string | 產品識別碼，會對應到 `config/<product>/config.yaml` | `"younow"` |
+| `report`  | string | 報表名稱，會對應到 config 中的 `reports.<report>` | `"daily"` |
+
+### 產品設定（`config/<product>/config.yaml`）
+
+一個產品的所有設定集中在這支 YAML，內部分成「product 層級」（DB、Deploy）與「report 層級」（Sheet、SQL）：
+
+```yaml
+product: younow
+
+db:                                 # product 層級：所有 report 共用（report 可 override）
+  driver: "postgres"                # postgres / mysql / sqlserver ...（預設 postgres）
+  conn_env: "RedshiftConnStr"
+
+deploy:                             # product 層級：給 deploy.sh 使用
+  function_name: "SQLDB-ETL-Pipeline-Younow"
+  lambda_role: "arn:aws:iam::xxxxxxxxxxxx:role/SO_ETL_Role"
+  architecture: "arm64"
+  timeout: 900
+  memory_size: 1024
+  region: "us-east-1"
+  aws_profile: "younow"
+
+reports:                            # 多份報表時，新增一個 key 即可
+  daily:
+    sheet:
+      name: "report"
+      spreadsheet_id: "1jaq2OJKUio..."
+      write_anchor: 11
+      start_search_column: "K2"
+      query_parameter_range: "H:J"
+    sql:
+      dir: "queries/younow/daily"
+
+  # weekly:                       # 同一個 product，不同 report 可指定不同 DB
+  #   sheet:
+  #     name: "weekly"
+  #     spreadsheet_id: "..."
+  #     write_anchor: 11
+  #     start_search_column: "K2"
+  #     query_parameter_range: "H:J"
+  #   sql:
+  #     dir: "queries/younow/weekly"
+  #   db:                         # 選填：不寫就用 product 層的預設
+  #     driver: "mysql"
+  #     conn_env: "AnalyticsMySQLConnStr"
+```
+
+說明：
+- `db.driver`：`sql.Open()` 用的 driver 名稱（`postgres` / `mysql` / `sqlserver` …）。未填預設 `postgres`。
+- `db.conn_env`：DB 連線字串對應的環境變數名稱；連線字串本身仍透過 Lambda 環境變數或本地 `.env` 提供，避免將 secret 寫進 git。
+- `db` 可以放在 product 層級（共用預設），也可以放在 `reports.<name>` 層級（該 report 專用）。實際使用時會以 **report 層級 > product 層級** 的順序合併。
+- `deploy.*`：給 `deploy.sh` 用的部署設定（Lambda function 名稱、IAM role、AWS profile 等）。
+- `reports.<name>.sheet.*`：該份報表的 Google Sheet 寫入設定。
+- `reports.<name>.sql.dir`：該份報表的 SQL 目錄，建議放在 `queries/<product>/<report>/` 下。
+
+### 新增其他 DB Driver
+
+`db.driver` 在 build 時要對應的 Go driver 已經被 import 才能使用。
+若要新增其他 driver，編輯 `cmd/main.go` 的 import 區塊：
+
+```go
+import (
+    _ "github.com/lib/pq"                 // driver 名稱: "postgres"
+    _ "github.com/go-sql-driver/mysql"    // driver 名稱: "mysql"
+    _ "github.com/denisenkom/go-mssqldb"  // driver 名稱: "sqlserver"
+)
+```
+
+對應的套件需要 `go get` 進來，才能在 `config.yaml` 把 `db.driver` 設成該名稱。
+
+### 新增一份新報表（同一產品）
+
+1. 在 `config/<product>/config.yaml` 的 `reports` 下新增一個 key（例如 `weekly`）。
+2. 在 `queries/<product>/weekly/` 放該報表的 `.sql` 檔。
+3. 觸發 Lambda 時帶 `{ "product": "<product>", "report": "weekly" }`。
+
+### 新增一個新產品
+
+1. 建立 `config/<new_product>/config.yaml`（可從 `config/younow/config.yaml` 複製後調整）。
+2. 建立 `queries/<new_product>/<report>/` 並放入該報表的 `.sql` 檔。
+3. 在 Lambda（或本機 `.env`）設定 `db.conn_env` 指定的環境變數。
+4. 部署：`./deploy.sh <new_product>`。
 
 ### SQL 檔案格式
 
-SQL 檔案應放在指定的目錄中（如 `dev_sql/`），檔案名稱（不含 `.sql` 副檔名）會作為 `SQLKey` 用於匹配 Sheet 中的查詢參數。
+SQL 檔案放在 `queries/<product>/<report>/`，檔案名稱（不含 `.sql` 副檔名）會作為 `SQLKey` 用於匹配 Sheet 中的查詢參數。
 
 查詢結果必須包含以下欄位：
 - `dt`: 日期欄位（time.Time 類型）
@@ -243,11 +326,24 @@ Sheet 需要包含以下結構：
 
 ## 部署
 
-### 使用部署腳本
+### 使用部署腳本（依產品）
+
+`deploy.sh` 會依 `config/<product>/config.yaml` 內的 `deploy.*` 區塊去呼叫 AWS Lambda：
 
 ```bash
-./deploy.sh
+./deploy.sh younow
 ```
+
+腳本會：
+
+1. 讀取 `config/<product>/config.yaml`（需要 `yq` 解析）。
+2. 編譯 `bootstrap`（`GOOS=linux GOARCH=<architecture>`）。
+3. 將 `bootstrap`、`config/<product>/`、`queries/<product>/` 打包成 `deployed_package_<product>.zip`。
+4. 若 Lambda function 不存在則以 `create-function` 建立，存在則以 `update-function-code` 更新。
+
+依賴：
+- 安裝 `yq`（macOS：`brew install yq`）。
+- 已設定對應 AWS profile（若 `deploy.aws_profile` 有值）。
 
 ## 開發說明
 

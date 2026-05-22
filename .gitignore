@@ -1,5 +1,6 @@
 .env
 bootstrap
 deployed_package.zip
+deployed_package_*.zip
 .DS_Store
 .idea
