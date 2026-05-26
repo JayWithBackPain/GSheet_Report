@@ -45,8 +45,8 @@ func Handler(ctx context.Context, request json.RawMessage) (LambdaResponse, erro
 		return LambdaResponse{Success: false, Message: "Failed to load report config"}, err
 	}
 	db := cfg.ResolveDB(report)
-	log.Printf("[%s/%s] sql_dir=%s, sheet=%s, db.driver=%s, db.conn_env=%s",
-		cfg.Product, req.Report, report.SQL.Dir, report.Sheet.Name, db.Driver, db.ConnEnv)
+	log.Printf("[%s/%s] sql_dir=%s, sheet=%s, db.driver=%s",
+		cfg.Product, req.Report, report.SQL.Dir, report.Sheet.Name, db.Driver)
 
 	sheetConfig := gsheet.SheetConfig{
 		SheetName:           report.Sheet.Name,
@@ -54,6 +54,9 @@ func Handler(ctx context.Context, request json.RawMessage) (LambdaResponse, erro
 		WriteAnchor:         report.Sheet.WriteAnchor,
 		StartSearchColumn:   report.Sheet.StartSearchColumn,
 		QueryParameterRange: report.Sheet.QueryParameterRange,
+		ClientID:            cfg.GSheet.ClientID,
+		ClientSecret:        cfg.GSheet.ClientSecret,
+		RefreshToken:        cfg.GSheet.RefreshToken,
 	}
 
 	SQLCodes, err := sys.LoadSQLFiles(report.SQL.Dir)
@@ -66,7 +69,7 @@ func Handler(ctx context.Context, request json.RawMessage) (LambdaResponse, erro
 
 	for key, code := range SQLCodes {
 		log.Printf("[%s/%s] Processing sql file %s", cfg.Product, req.Report, key)
-		QueryResult := dbquery.GetSingleQueryResult(db.Driver, db.ConnEnv, code)
+		QueryResult := dbquery.GetSingleQueryResult(db.Driver, db.ConnStr, code)
 		log.Printf("[%s/%s] Start writing sql %s", cfg.Product, req.Report, key)
 		gsheet.WriteTargetDateData(key, sheetConfig, QueryResult)
 	}
@@ -78,10 +81,6 @@ func Handler(ctx context.Context, request json.RawMessage) (LambdaResponse, erro
 }
 
 func main() {
-	if err := sys.LoadEnv(); err != nil {
-		log.Printf("Warning: Failed to load .env file: %v", err)
-	}
-
 	if os.Getenv("LAMBDA_TASK_ROOT") != "" {
 		log.Println("Running in Lambda environment")
 		lambda.Start(Handler)
@@ -89,15 +88,8 @@ func main() {
 	}
 
 	log.Println("Running in local environment")
-	product := os.Getenv("PRODUCT")
-	if product == "" {
-		product = "younow"
-	}
-	report := os.Getenv("REPORT")
-	if report == "" {
-		report = "daily"
-	}
-	testRequest, _ := json.Marshal(LambdaRequest{Product: product, Report: report})
+
+	testRequest, _ := json.Marshal(LambdaRequest{Product: "goodnight", Report: "main_kpi"})
 
 	response, err := Handler(context.Background(), testRequest)
 	if err != nil {

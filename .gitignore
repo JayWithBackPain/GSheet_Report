@@ -1,6 +1,9 @@
-.env
 bootstrap
 deployed_package.zip
 deployed_package_*.zip
 .DS_Store
 .idea
+
+# Per-product config 含 secret，不可入 git。
+# 對應的 .example 檔仍會被追蹤。
+config/*/config.yaml

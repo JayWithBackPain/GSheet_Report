@@ -16,6 +16,11 @@ type SheetConfig struct {
 	WriteAnchor         int    // 寫入錨點（欄位索引）
 	StartSearchColumn   string // 起始搜尋欄位（如 "K2"）
 	QueryParameterRange string // 查詢參數範圍（如 "H:J")
+
+	// Google OAuth credentials（由 ProductConfig.GSheet 提供）
+	ClientID     string
+	ClientSecret string
+	RefreshToken string
 }
 
 // findStartColumn 從指定的起始儲存格開始搜尋，找到與最小日期匹配的欄位
@@ -61,9 +66,26 @@ func findStartColumn(GSheetService *sheets.Service, req SheetConfig, minDate tim
 	return d2ColumnIndex, rowNumber, nil
 }
 
+// getSheetColumnCount 取得指定 sheet 的實際欄數（Google Sheet 預設 26，用戶可調整）。
+// 用來計算「清空到整列最右」的範圍。
+func getSheetColumnCount(svc *sheets.Service, spreadsheetID, sheetName string) (int, error) {
+	resp, err := svc.Spreadsheets.Get(spreadsheetID).Fields("sheets(properties(title,gridProperties(columnCount)))").Do()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get spreadsheet metadata: %w", err)
+	}
+	for _, s := range resp.Sheets {
+		if s.Properties != nil && s.Properties.Title == sheetName {
+			if s.Properties.GridProperties != nil {
+				return int(s.Properties.GridProperties.ColumnCount), nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("sheet %q not found in spreadsheet %s", sheetName, spreadsheetID)
+}
+
 func WriteTargetDateData(SQLKey string, req SheetConfig, QueryResults []map[string]interface{}) {
 	// ----- 連接 google sheet server ------------------------------
-	GSheetService, err := InitSheetService()
+	GSheetService, err := InitSheetService(req.ClientID, req.ClientSecret, req.RefreshToken)
 	if err != nil {
 		log.Fatalf("Failed to initialize google sheet service: %v", err)
 	}
@@ -86,6 +108,13 @@ func WriteTargetDateData(SQLKey string, req SheetConfig, QueryResults []map[stri
 	}
 
 	log.Printf("Using start column index: %d (min date: %s, date row: %d)", d2ColumnIndex, minDate.Format("2006-01-02"), dateRowNumber)
+
+	// 取得該 sheet 的實際 columnCount（清空範圍會用到「整列最右」）
+	sheetMaxCol, err := getSheetColumnCount(GSheetService, req.SpreadSheetID, req.SheetName)
+	if err != nil {
+		log.Fatalf("Failed to get sheet column count: %v", err)
+	}
+	log.Printf("Sheet %q has %d columns", req.SheetName, sheetMaxCol)
 
 	// 讀取 Google Sheet 上的日期欄位（使用動態行號）
 	dateRowRange := fmt.Sprintf("%s!%s%d:zz%d", req.SheetName, sys.ColumnIndexToLetter(d2ColumnIndex), dateRowNumber, dateRowNumber)
@@ -150,9 +179,12 @@ func WriteTargetDateData(SQLKey string, req SheetConfig, QueryResults []map[stri
 		writeColIndex := d2ColumnIndex + startIdx
 		UpdateRange := fmt.Sprintf("%s!%s%d", req.SheetName, sys.ColumnIndexToLetter(writeColIndex), i+1)
 
-		// 準備清空範圍（從 writeColIndex 開始，長度為 dateHeaders）
-		endClearColIndex := writeColIndex + len(dateHeaders) - 1
-		ClearRange := fmt.Sprintf("%s!%s%d:%s%d", req.SheetName, sys.ColumnIndexToLetter(writeColIndex), i+1, sys.ColumnIndexToLetter(endClearColIndex), i+1)
+		// 清空範圍：固定從 d2ColumnIndex 開始，清到該 sheet 最右側欄位。
+		// 這樣不會因為 startIdx 偏移而漏清左邊；同時涵蓋 dateHeaders 之後可能殘留的舊資料。
+		ClearRange := fmt.Sprintf("%s!%s%d:%s%d",
+			req.SheetName,
+			sys.ColumnIndexToLetter(d2ColumnIndex), i+1,
+			sys.ColumnIndexToLetter(sheetMaxCol), i+1)
 		clearRanges = append(clearRanges, ClearRange)
 		//log.Printf("即將寫入 UpdateRange: %s, writeValues: %v", UpdateRange, writeValues)
 		// 存入批量更新
@@ -165,6 +197,9 @@ func WriteTargetDateData(SQLKey string, req SheetConfig, QueryResults []map[stri
 	if len(dataUpdates) > 0 {
 		if len(clearRanges) > 0 {
 			log.Printf("Preparing to batch clear %d ranges", len(clearRanges))
+			for i, r := range clearRanges {
+				log.Printf("  Clear %d: %s", i+1, r)
+			}
 			_, err := GSheetService.Spreadsheets.Values.BatchClear(req.SpreadSheetID, &sheets.BatchClearValuesRequest{
 				Ranges: clearRanges,
 			}).Do()

@@ -174,19 +174,19 @@ cd GSheet_Report
 go mod download
 ```
 
-### 3. 環境變數設定
+### 3. 建立產品的 config.yaml
 
-建立 `.env` 檔案：
+每個產品的所有設定（含 secret）都集中在 `config/<product>/config.yaml`。
+從附帶的範本複製一份開始：
 
-```env
-# 資料庫連接
-RedshiftConnStr=postgresql://user:password@host:port/database
-
-# Google Sheets API 認證
-CLIENT_ID=your_client_id
-CLIENT_SECRET=your_client_secret
-FRESH_TOKEN=your_refresh_token
+```bash
+cp config/younow/config.yaml.example config/younow/config.yaml
+# 接著填入 client_id / client_secret / refresh_token / db.conn_str / spreadsheet_id 等
 ```
+
+**重要：** `config/*/config.yaml` 已被 `.gitignore` 排除（內含 secret）。
+要交接給其他人時請**走安全管道**（密碼管理器、AWS Secrets Manager 等），
+**不要**把實際 config.yaml 推進 git 或聊天工具。
 
 ## 使用方式
 
@@ -226,14 +226,20 @@ PRODUCT=younow REPORT=weekly go run cmd/main.go
 
 ### 產品設定（`config/<product>/config.yaml`）
 
-一個產品的所有設定集中在這支 YAML，內部分成「product 層級」（DB、Deploy）與「report 層級」（Sheet、SQL）：
+一個產品的所有設定（含 secret）集中在這支 YAML，分成「product 層級」（OAuth、DB、Deploy）與「report 層級」（Sheet、SQL）：
 
 ```yaml
 product: younow
 
+# Google Sheets OAuth credentials（共用同一份產品下所有 reports）
+gsheet:
+  client_id: "<YOUR_GOOGLE_OAUTH_CLIENT_ID>"
+  client_secret: "<YOUR_GOOGLE_OAUTH_CLIENT_SECRET>"
+  refresh_token: "<YOUR_REFRESH_TOKEN>"
+
 db:                                 # product 層級：所有 report 共用（report 可 override）
   driver: "postgres"                # postgres / mysql / sqlserver ...（預設 postgres）
-  conn_env: "RedshiftConnStr"
+  conn_str: "host=... port=5439 user=... password=... dbname=... sslmode=require"
 
 deploy:                             # product 層級：給 deploy.sh 使用
   function_name: "SQLDB-ETL-Pipeline-Younow"
@@ -266,16 +272,23 @@ reports:                            # 多份報表時，新增一個 key 即可
   #     dir: "queries/younow/weekly"
   #   db:                         # 選填：不寫就用 product 層的預設
   #     driver: "mysql"
-  #     conn_env: "AnalyticsMySQLConnStr"
+  #     conn_str: "<MYSQL_CONN_STR>"
 ```
 
 說明：
+- `gsheet.*`：Google OAuth 憑證；whole product 共用。**含 secret**，不要 commit。
 - `db.driver`：`sql.Open()` 用的 driver 名稱（`postgres` / `mysql` / `sqlserver` …）。未填預設 `postgres`。
-- `db.conn_env`：DB 連線字串對應的環境變數名稱；連線字串本身仍透過 Lambda 環境變數或本地 `.env` 提供，避免將 secret 寫進 git。
+- `db.conn_str`：DB 連線字串本體（含帳密），直接寫在 YAML。**含 secret**，不要 commit。
 - `db` 可以放在 product 層級（共用預設），也可以放在 `reports.<name>` 層級（該 report 專用）。實際使用時會以 **report 層級 > product 層級** 的順序合併。
 - `deploy.*`：給 `deploy.sh` 用的部署設定（Lambda function 名稱、IAM role、AWS profile 等）。
 - `reports.<name>.sheet.*`：該份報表的 Google Sheet 寫入設定。
 - `reports.<name>.sql.dir`：該份報表的 SQL 目錄，建議放在 `queries/<product>/<report>/` 下。
+
+### Secret 與 git
+- `config/*/config.yaml` 已被 `.gitignore` 排除。
+- 對應的 `config/*/config.yaml.example` 不含 secret，會被 commit 作為新人 onboard 的範本。
+- `deploy.sh` 會把 `config/<product>/` 整個打包進 Lambda zip，因此 secret 透過 zip 直接帶進 Lambda runtime（不再需要 Lambda 環境變數設定）。
+- 如果你之前曾把 secret 推進 git，請務必 **rotate** 對應的 DB 密碼、Google OAuth client secret 與 refresh token。
 
 ### 新增其他 DB Driver
 
@@ -300,9 +313,9 @@ import (
 
 ### 新增一個新產品
 
-1. 建立 `config/<new_product>/config.yaml`（可從 `config/younow/config.yaml` 複製後調整）。
-2. 建立 `queries/<new_product>/<report>/` 並放入該報表的 `.sql` 檔。
-3. 在 Lambda（或本機 `.env`）設定 `db.conn_env` 指定的環境變數。
+1. 建立 `config/<new_product>/config.yaml.example`（可從 `config/younow/config.yaml.example` 複製後調整）並 commit。
+2. 從 example 複製出實際的 `config/<new_product>/config.yaml`（**不會被 commit**），把 secret、conn_str 等填上。
+3. 建立 `queries/<new_product>/<report>/` 並放入該報表的 `.sql` 檔。
 4. 部署：`./deploy.sh <new_product>`。
 
 ### SQL 檔案格式

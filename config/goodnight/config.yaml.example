@@ -1,0 +1,43 @@
+product: goodnight
+
+# Google Sheets OAuth credentials（共用同一份產品下所有 reports）
+gsheet:
+  client_id: "<YOUR_GOOGLE_OAUTH_CLIENT_ID>"
+  client_secret: "<YOUR_GOOGLE_OAUTH_CLIENT_SECRET>"
+  refresh_token: "<YOUR_REFRESH_TOKEN>"
+
+# DB 連線設定（report 內可 override）
+db:
+  driver: "postgres"            # postgres / mysql / sqlserver ... (預設 postgres)
+  conn_str: "host=<HOST> port=5439 user=<USER> password=<PASSWORD> dbname=<DBNAME> sslmode=require"
+
+deploy:
+  function_name: "SQLDB-ETL-Pipeline-Goodnight"
+  lambda_role: "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"
+  architecture: "arm64"
+  timeout: 900
+  memory_size: 1024
+  region: "us-east-1"
+  aws_profile: "goodnight"
+
+reports:
+  daily:
+    sheet:
+      name: "report"
+      spreadsheet_id: "<GOOGLE_SHEET_ID>"
+      write_anchor: 11
+      start_search_column: "K2"
+      query_parameter_range: "H:J"
+    sql:
+      dir: "queries/goodnight/daily"
+
+  # 同一個產品想多份報表時，加 key 即可：
+  # weekly:
+  #   sheet:
+  #     name: "weekly"
+  #     spreadsheet_id: "<ANOTHER_SHEET_ID>"
+  #     write_anchor: 11
+  #     start_search_column: "K2"
+  #     query_parameter_range: "H:J"
+  #   sql:
+  #     dir: "queries/goodnight/weekly"

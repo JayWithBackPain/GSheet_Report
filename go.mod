@@ -5,10 +5,10 @@ go 1.23.2
 require (
 	github.com/JayWithBackPain/etl_tool_box v0.0.0-20250220062350-46b317c503d5
 	github.com/aws/aws-lambda-go v1.49.0
-	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
 	golang.org/x/oauth2 v0.30.0
 	google.golang.org/api v0.244.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -34,5 +34,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250728155136-f173205681a0 // indirect
 	google.golang.org/grpc v1.74.2 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
