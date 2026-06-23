@@ -48,6 +48,10 @@ SELECT
 	CASE
 		WHEN rolling_30d_cans = 0 THEN 0
 		ELSE rolling_30d_revenue / NULLIF(rolling_30d_cans, 0)
-		END AS rolling_ratio
+		END AS rolling_ratio,
+	case
+		when rolling_30d_cans = 0 then 0
+		else rolling_30d_cans / nullif(rolling_30d_revenue,0)
+		end as can_per_daollar
 FROM rolling_summary
 where dt >= DATEADD(month, -3, DATE_TRUNC('month', CURRENT_DATE))::DATE
