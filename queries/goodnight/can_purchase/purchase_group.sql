@@ -39,6 +39,7 @@ WITH filtered_purchase AS (
 	     SELECT
 		     t.dt,
 		     t.user_id,
+		     case when ppu.country_code in ('TW','KR','JP','TH','US') then ppu.country_code else 'Others' end as region,
 		     t.usd_price,
 		     CASE
 			     WHEN t.can_gain <= 100 THEN '1-100'
@@ -49,43 +50,82 @@ WITH filtered_purchase AS (
 			     END AS price_group,
 		     l.payer_type
 	     FROM filtered_purchase t
-		          JOIN lifecycle_flags l
-		               ON t.user_id = l.user_id
-			               AND t.dt = l.dt
+		          JOIN lifecycle_flags l ON t.user_id = l.user_id AND t.dt = l.dt
+	              left join prod_pg_users ppu on t.user_id = ppu.id
 	     WHERE t.dt >= DATE_TRUNC('month', DATEADD(month, -3, CURRENT_DATE))::DATE
-     )
-SELECT
-	dt,
-	-- 總體指標
-	'global' as region,
-	COUNT(DISTINCT user_id) AS total_payers,
-	SUM(usd_price) AS total_revenue,
+     ),
+	global_agg as (
+		SELECT
+			dt,
+			-- 總體指標
+			'global' as region,
+			COUNT(DISTINCT user_id) AS total_payers,
+			SUM(usd_price) AS total_revenue,
 
-	-- 各價格帶營收 (Revenue by Price Group)
-	SUM(CASE WHEN price_group = '1-100' THEN usd_price ELSE 0 END) AS "1-100_revenue",
-	SUM(CASE WHEN price_group = '101-1500' THEN usd_price ELSE 0 END) AS "101-1500_revenue",
-	SUM(CASE WHEN price_group = '1501-2000' THEN usd_price ELSE 0 END) AS "1501-2000_revenue",
-	SUM(CASE WHEN price_group = '2001-15000' THEN usd_price ELSE 0 END) AS "2001-15000_revenue",
-	SUM(CASE WHEN price_group = 'Over 15001' THEN usd_price ELSE 0 END) AS "over_15001_revenue",
+			-- 各價格帶營收 (Revenue by Price Group)
+			SUM(CASE WHEN price_group = '1-100' THEN usd_price ELSE 0 END) AS "1-100_revenue",
+			SUM(CASE WHEN price_group = '101-1500' THEN usd_price ELSE 0 END) AS "101-1500_revenue",
+			SUM(CASE WHEN price_group = '1501-2000' THEN usd_price ELSE 0 END) AS "1501-2000_revenue",
+			SUM(CASE WHEN price_group = '2001-15000' THEN usd_price ELSE 0 END) AS "2001-15000_revenue",
+			SUM(CASE WHEN price_group = 'Over 15001' THEN usd_price ELSE 0 END) AS "over_15001_revenue",
 
-	-- 各價格帶人數 (Payers by Price Group)
-	COUNT(DISTINCT CASE WHEN price_group = '1-100' THEN user_id END) AS "1-100_payers",
-	COUNT(DISTINCT CASE WHEN price_group = '101-1500' THEN user_id END) AS "101-1500_payers",
-	COUNT(DISTINCT CASE WHEN price_group = '1501-2000' THEN user_id END) AS "1501-2000_payers",
-	COUNT(DISTINCT CASE WHEN price_group = '2001-15000' THEN user_id END) AS "2001-15000_payers",
-	COUNT(DISTINCT CASE WHEN price_group = 'Over 15001' THEN user_id END) AS "over_15001_payers",
+			-- 各價格帶人數 (Payers by Price Group)
+			COUNT(DISTINCT CASE WHEN price_group = '1-100' THEN user_id END) AS "1-100_payers",
+			COUNT(DISTINCT CASE WHEN price_group = '101-1500' THEN user_id END) AS "101-1500_payers",
+			COUNT(DISTINCT CASE WHEN price_group = '1501-2000' THEN user_id END) AS "1501-2000_payers",
+			COUNT(DISTINCT CASE WHEN price_group = '2001-15000' THEN user_id END) AS "2001-15000_payers",
+			COUNT(DISTINCT CASE WHEN price_group = 'Over 15001' THEN user_id END) AS "over_15001_payers",
 
-	-- 用戶生命週期人數 (Payers by Lifecycle)
-	COUNT(DISTINCT CASE WHEN payer_type = 'continuing' THEN user_id END) AS continuing_payers,
-	COUNT(DISTINCT CASE WHEN payer_type = 'lapsing' THEN user_id END) AS lapsing_payers,
-	COUNT(DISTINCT CASE WHEN payer_type = 'resurrected' THEN user_id END) AS resurrected_payers,
-	COUNT(DISTINCT CASE WHEN payer_type = 'new' THEN user_id END) AS new_payers,
+			-- 用戶生命週期人數 (Payers by Lifecycle)
+			COUNT(DISTINCT CASE WHEN payer_type = 'continuing' THEN user_id END) AS continuing_payers,
+			COUNT(DISTINCT CASE WHEN payer_type = 'lapsing' THEN user_id END) AS lapsing_payers,
+			COUNT(DISTINCT CASE WHEN payer_type = 'resurrected' THEN user_id END) AS resurrected_payers,
+			COUNT(DISTINCT CASE WHEN payer_type = 'new' THEN user_id END) AS new_payers,
 
-	-- 用戶生命週期營收 (Revenue by Lifecycle)
-	sum(case when payer_type = 'continuing' then usd_price else 0 end) as continuing_revenue,
-	sum(case when payer_type = 'lapsing' then usd_price else 0 end) as continuing_revenue,
-	sum(case when payer_type = 'resurrected' then usd_price else 0 end) as continuing_revenue,
-	sum(case when payer_type = 'new' then usd_price else 0 end) as continuing_revenue
-FROM base_tx
-GROUP BY 1,2
-ORDER BY 1 DESC;
+			-- 用戶生命週期營收 (Revenue by Lifecycle)
+			sum(case when payer_type = 'continuing' then usd_price else 0 end) as continuing_revenue,
+			sum(case when payer_type = 'lapsing' then usd_price else 0 end) as continuing_revenue,
+			sum(case when payer_type = 'resurrected' then usd_price else 0 end) as continuing_revenue,
+			sum(case when payer_type = 'new' then usd_price else 0 end) as continuing_revenue
+		FROM base_tx
+		GROUP BY 1,2
+	),
+	 regional_agg as (
+		 SELECT
+			 dt,
+			 -- 總體指標
+			 region,
+			 COUNT(DISTINCT user_id) AS total_payers,
+			 SUM(usd_price) AS total_revenue,
+
+			 -- 各價格帶營收 (Revenue by Price Group)
+			 SUM(CASE WHEN price_group = '1-100' THEN usd_price ELSE 0 END) AS "1-100_revenue",
+			 SUM(CASE WHEN price_group = '101-1500' THEN usd_price ELSE 0 END) AS "101-1500_revenue",
+			 SUM(CASE WHEN price_group = '1501-2000' THEN usd_price ELSE 0 END) AS "1501-2000_revenue",
+			 SUM(CASE WHEN price_group = '2001-15000' THEN usd_price ELSE 0 END) AS "2001-15000_revenue",
+			 SUM(CASE WHEN price_group = 'Over 15001' THEN usd_price ELSE 0 END) AS "over_15001_revenue",
+
+			 -- 各價格帶人數 (Payers by Price Group)
+			 COUNT(DISTINCT CASE WHEN price_group = '1-100' THEN user_id END) AS "1-100_payers",
+			 COUNT(DISTINCT CASE WHEN price_group = '101-1500' THEN user_id END) AS "101-1500_payers",
+			 COUNT(DISTINCT CASE WHEN price_group = '1501-2000' THEN user_id END) AS "1501-2000_payers",
+			 COUNT(DISTINCT CASE WHEN price_group = '2001-15000' THEN user_id END) AS "2001-15000_payers",
+			 COUNT(DISTINCT CASE WHEN price_group = 'Over 15001' THEN user_id END) AS "over_15001_payers",
+
+			 -- 用戶生命週期人數 (Payers by Lifecycle)
+			 COUNT(DISTINCT CASE WHEN payer_type = 'continuing' THEN user_id END) AS continuing_payers,
+			 COUNT(DISTINCT CASE WHEN payer_type = 'lapsing' THEN user_id END) AS lapsing_payers,
+			 COUNT(DISTINCT CASE WHEN payer_type = 'resurrected' THEN user_id END) AS resurrected_payers,
+			 COUNT(DISTINCT CASE WHEN payer_type = 'new' THEN user_id END) AS new_payers,
+
+			 -- 用戶生命週期營收 (Revenue by Lifecycle)
+			 sum(case when payer_type = 'continuing' then usd_price else 0 end) as continuing_revenue,
+			 sum(case when payer_type = 'lapsing' then usd_price else 0 end) as continuing_revenue,
+			 sum(case when payer_type = 'resurrected' then usd_price else 0 end) as continuing_revenue,
+			 sum(case when payer_type = 'new' then usd_price else 0 end) as continuing_revenue
+		 FROM base_tx
+		 GROUP BY 1,2
+	 )
+select * from global_agg
+union all
+select * from regional_agg
