@@ -89,7 +89,7 @@ func main() {
 
 	log.Println("Running in local environment")
 
-	testRequest, _ := json.Marshal(LambdaRequest{Product: "goodnight", Report: "mkt"})
+	testRequest, _ := json.Marshal(LambdaRequest{Product: "younow", Report: "source"})
 
 	response, err := Handler(context.Background(), testRequest)
 	if err != nil {
