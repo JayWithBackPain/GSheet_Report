@@ -9,4 +9,4 @@ deployed_package_*.zip
 config/*/config.yaml
 
 CLAUDE.md
-./.claude/*
+.claude/
